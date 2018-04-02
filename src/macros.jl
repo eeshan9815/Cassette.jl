@@ -22,21 +22,17 @@ macro context(Ctx)
         struct $Ctx{T<:$Cassette.Tag} <: $Cassette.Context
             @inline $Ctx(f) = new{$Cassette.tagtype(f)}()
         end
-        $Cassette.@primitive function Cassette.tagtype(x) where {__CONTEXT__<:$Ctx}
-            return $Cassette.tagtype(__CONTEXT__, x)
-        end
-        $Cassette.@execution function Core.getfield(x, name) where {__CONTEXT__<:$Ctx}
-            return $Cassette._getfield(x, name)
-        end
-        $Cassette.@execution function Core.setfield!(x, name, y) where {__CONTEXT__<:$Ctx}
-            return $Cassette._setfield!(x, name, y)
-        end
-        $Cassette.@execution function Core.arrayref(check, x, i) where {__CONTEXT__<:$Ctx}
-            return $Cassette._arrayref(check, x, i)
-        end
-        $Cassette.@execution function Core.arrayset(check, x, y, i) where {__CONTEXT__<:$Ctx}
-            return $Cassette._arrayset(check, x, y, i)
-        end
+        $Cassette.@primitive Cassette.tagtype(x) where {__CONTEXT__<:$Ctx} = $Cassette.tagtype(__CONTEXT__, x)
+        $Cassette.@execution Core.getfield(x::@Box, name) where {__CONTEXT__<:$Ctx} = $Cassette._getfield(x, name)
+        $Cassette.@execution Core.setfield!(x::@Box, name, y) where {__CONTEXT__<:$Ctx} = $Cassette._setfield!(x, name, y)
+        $Cassette.@execution Core.arrayref(check, x::@Box, i) where {__CONTEXT__<:$Ctx} = $Cassette._arrayref(check, x, i)
+        $Cassette.@execution Core.arrayset(check, x::@Box, y, i) where {__CONTEXT__<:$Ctx} = $Cassette._arrayset(check, x, y, i)
+        $Cassette.@execution Base._growbeg!(x::@Box, delta) where {__CONTEXT__<:$Ctx} = $Cassette.__growbeg!(x, delta)
+        $Cassette.@execution Base._growend!(x::@Box, delta) where {__CONTEXT__<:$Ctx} = $Cassette.__growend!(x, delta)
+        $Cassette.@execution Base._growat!(x::@Box, i, delta) where {__CONTEXT__<:$Ctx} = $Cassette.__growat!(x, i, delta)
+        $Cassette.@execution Base._deletebeg!(x::@Box, delta) where {__CONTEXT__<:$Ctx} = $Cassette.__deletebeg!(x, delta)
+        $Cassette.@execution Base._deleteend!(x::@Box, delta) where {__CONTEXT__<:$Ctx} = $Cassette.__deleteend!(x, delta)
+        $Cassette.@execution Base._deleteat!(x::@Box, i, delta) where {__CONTEXT__<:$Ctx} = $Cassette.__deleteat!(x, i, delta)
         $Ctx
     end)
 end
@@ -242,7 +238,7 @@ For example:
     @prehook function (f::Any)(x::@Box(Number,String)) where {__CONTEXT__<:BoxCtx}
         println("The numeric value ", unbox(__trace__.context, x),
                 " was wrapped in a Cassette.Box and passed to ", f,
-                " and carries the message: ", meta(__trace__.context, x))
+                " and carries the message: ", metadata(__trace__.context, x))
     end
 
 Note that `Cassette.@Box` can only used within the scope of a contextual method signature.

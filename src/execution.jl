@@ -19,11 +19,10 @@ get_world_age() = ccall(:jl_get_tls_world_age, UInt, ()) # ccall(:jl_get_world_c
 
 abstract type AbstractPass end
 
-struct TraceConfig{C<:Context,M,w,b,d,P<:Union{AbstractPass,Unused}}
+struct TraceConfig{C<:Context,M,w,d,P<:Union{AbstractPass,Unused}}
     context::C
     metadata::M
     world::Val{w}
-    boxes::Val{b}
     debug::Val{d}
     pass::P
 end
@@ -33,10 +32,9 @@ const AnyTraceConfig{world} = TraceConfig{<:Context,<:Any,world}
 function TraceConfig(context::Context;
                      metadata = unused,
                      world::Val = Val(get_world_age()),
-                     boxes::Val = Val(false),
                      debug::Val = Val(false),
                      pass::Union{AbstractPass,Unused} = unused)
-    return TraceConfig(context, metadata, world, boxes, debug, pass)
+    return TraceConfig(context, metadata, MetaSpace(context), world, debug, pass)
 end
 
 @inline prehook(::AnyTraceConfig{w}, ::Vararg{Any}) where {w} = nothing
@@ -46,8 +44,8 @@ end
 @inline execution(cfg::AnyTraceConfig{w}, f, args...) where {w} = unboxcall(cfg.context, f, args...)
 
 @generated function _is_core_primitive(cfg::TraceConfig{C,M,w}, ::Type{F}, args...) where {C,M,w,F}
-    ftype = unbox(C, F)
-    atypes = Tuple(unbox(C, T) for T in args)
+    ftype = unboxtype(C, F)
+    atypes = Tuple(unboxtype(C, T) for T in args)
     signature = Tuple{ftype,atypes...}
     # TODO: this is slow, we should try to check whether CodeInfo is retrievable
     # rather than going through the whole process of actually retrieving it
@@ -166,8 +164,8 @@ function overdub_pass!(method_body::CodeInfo, boxes_enabled::Bool)
 end
 
 function overdub_transform_call_generator(::Type{F}, ::Type{C}, ::Type{M}, world, boxes, debug, pass, f, args) where {F,C,M}
-    ftype = unbox(C, F)
-    atypes = Tuple(unbox(C, T) for T in args)
+    ftype = unboxtype(C, F)
+    atypes = Tuple(unboxtype(C, T) for T in args)
     signature = Tuple{ftype,atypes...}
     try
         method_body = lookup_method_body(signature; world = world, debug = debug, pass = pass)
