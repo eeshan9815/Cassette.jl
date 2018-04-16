@@ -23,7 +23,7 @@ end
     return y
 end
 
-@inline function Base.setindex!(m::MetaMemory, ctx::C, x::X, y) where {C<:Context,X}
+@inline function Base.setindex!(m::MetaMemory, y, ctx::C, x::X) where {C<:Context,X}
     @assert isa(y, metatype(C, X))
     m.memory[address(x)] = (ctx, y)
     finalizer(x -> delete!(m.memory, x), x)
@@ -58,8 +58,8 @@ const MEMORY = MetaMemory()
 ########
 
 struct Meta{D,T<:Union{NamedTuple,Array}}
-    data::Union{D,Unused}
-    tree::T
+    id::Int
+    substructure::Union{T,Unused}
 end
 
 @inline metadatatype(::Type{<:Context}, ::DataType) = Unused
@@ -79,12 +79,12 @@ _ndims(::Type{Array{T,N} where N}) where {T} = -1
         end
     elseif isconcretetype(T)
         fnames = fieldnames(T)
-        ftypes = Expr(:curly, :Tuple, [:(Union{Unused,metatype(C, $F)}) for F in T.types]...)
-        result = :(Meta{metadatatype(C, T),NamedTuple{$fnames,$ftypes}}})
+        ftypes = Expr(:curly, :Tuple, [:(metatype(C, $F)) for F in T.types]...)
+        result = :(Meta{metadatatype(C, T),NamedTuple{$fnames,$ftypes}})
     else
-        # TODO: This commented-out code returns a more specific result, but it's a bit rough
-        # compiler-wise; to actually compute subtypes correctly here, we'd have to re-expand
-        # this generated function for every new world age...
+        # This commented-out code returns a more specific result, but it's a bit rough on
+        # the compiler; to actually compute subtypes correctly here, we'd have to re-expand
+        # this generated function for every new world age.
         # metasubtypes = [:(metatype(C, $S)) for S in subtypes(T)]
         # result = :(Union{$(metasubtypes...)})
         result = :(Meta)
@@ -183,36 +183,38 @@ end
     end
 end
 
-# @generated function _new_box(ctx::C, ::Type{T}, args...) where {C<:Context,T}
-#     if !(any(arg <: Box{C} for arg in args)) || !(isconcretetype(T)) || (length(args) != fieldcount(T))
-#         result = :(_new(T, args...))
-#     else
-#         unboxed_args = [:(unbox(ctx, args[$i])) for i in 1:length(args)]
-#         fields = Expr(:tuple)
-#         fnames = fieldnames(T)
-#         S = isimmutable(T) ? :Immutable : :Mutable
-#         for i in 1:fieldcount(T)
-#             arg = args[i]
-#             fname = fnames[i]
-#             ftype = :(metatype(C, $(T.types[i])))
-#             argmetanode = arg <: Box{C} ? :(args[$i].meta) : :unused
-#             push!(fields.args, :($fname = $S{$ftype}($argmetanode)))
-#         end
-#         # TODO: Here, we could actually just return the Box regardless of the mutability
-#         # of the type. However, using MEMORY for mutable types is more consistent
-#         if isimmutable(T)
-#             result = :(Box(ctx, _new(T, $(unboxed_args...)), metatype(C, T)(unused, $fields)))
-#         else
-#             result = quote
-#
-#             end
-#         end
-#     end
-#     return quote
-#         $(Expr(:meta, :inline))
-#         $result
-#     end
-# end
+@generated function _new_box(ctx::C, ::Type{T}, args...) where {C<:Context,T}
+    if !(any(arg <: Box{C} for arg in args)) || !(isconcretetype(T)) || (length(args) != fieldcount(T))
+        result = :(_new(T, args...))
+    else
+        unboxed_args = [:(unbox(ctx, args[$i])) for i in 1:length(args)]
+        fields = Expr(:tuple)
+        fnames = fieldnames(T)
+        for i in 1:fieldcount(T)
+            arg = args[i]
+            fname = fnames[i]
+            mtype = :(metatype(C, $(T.types[i])))
+            fmeta = arg <: Box{C} ? :(args[$i].meta::$mtype) : :($mtype(unused, unused))
+            push!(fields.args, :($fname = $fmeta))
+        end
+        new_T = :(_new(T, $(unboxed_args...)))
+        meta_T = :(metatype(C, T)(unused, $fields))
+        # result = :(Box(ctx, $new_T, $meta_T))
+        # if isimmutable(T)
+        # else
+        #     result = quote
+        #         new_T = $new_T
+        #         meta_T = $meta_T
+        #         # MEMORY[ctx, new_T] = meta_T
+        #         return Box(ctx, new_T, meta_T)
+        #     end
+        # end
+    end
+    return quote
+        $(Expr(:meta, :inline))
+        $result
+    end
+end
 
 # #####################
 # # struct primitives #
