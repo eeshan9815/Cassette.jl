@@ -42,6 +42,9 @@ end
 # Julia IR/Reflection #
 #######################
 
+min_world_ref() = UInt[typemin(UInt)]
+max_world_ref() = UInt[typemax(UInt)]
+
 mutable struct Reflection
     signature::DataType
     method::Method
@@ -50,7 +53,10 @@ mutable struct Reflection
 end
 
 # Return `Reflection` for signature `sigtypes` and `world`, if possible. Otherwise, return `nothing`.
-function reflect(@nospecialize(sigtypes::Tuple), world::UInt = typemax(UInt))
+function reflect(@nospecialize(sigtypes::Tuple),
+                 world::UInt = typemax(UInt),
+                 min_world::Vector{UInt} = min_world_ref(),
+                 max_world::Vector{UInt} = max_world_ref())
     # This works around a subtyping bug. Basically, callers can deconstruct upstream
     # `UnionAll` types in such a way that results in a type with free type variables, in
     # which case subtyping can just break.
@@ -66,7 +72,7 @@ function reflect(@nospecialize(sigtypes::Tuple), world::UInt = typemax(UInt))
     S = Tuple{map(s -> Core.Compiler.has_free_typevars(s) ? typeof(s.parameters[1]) : s, sigtypes)...}
     # @safe_debug "looking up method" signature=S world=world
     (S.parameters[1]::DataType).name.module === Core.Compiler && return nothing
-    _methods = Base._methods_by_ftype(S, -1, world)
+    _methods = Base._methods_by_ftype(S, -1, world, min_world, max_world)
     length(_methods) == 1 || return nothing
     type_signature, raw_static_params, method = first(_methods)
     method_instance = Core.Compiler.code_for_method(method, type_signature, raw_static_params, world, false)
@@ -113,6 +119,8 @@ end
 
 # there's also `ccall(:jl_get_world_counter, UInt, ())`
 get_world_age() = ccall(:jl_get_tls_world_age, UInt, ())
+
+get_lowered_cinfo(method::Expr) = Meta.lower(Cassette, method).args[1].code[end-1].args[3]
 
 #################
 # Miscellaneous #
