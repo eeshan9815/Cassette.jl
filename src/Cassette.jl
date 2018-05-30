@@ -6,8 +6,6 @@ using Core: CodeInfo, SlotNumber, NewvarNode, LabelNode, GotoNode, SSAValue
 
 using Logging
 
-struct UnusedMeta end
-
 abstract type AbstractPass end
 struct UnusedPass <: AbstractPass end
 (::Type{UnusedPass})(::Any, ::Any, code_info) = code_info
