@@ -38,9 +38,11 @@ function replace_match!(replace, ismatch, x)
     return x
 end
 
-#######################
-# Julia IR/Reflection #
-#######################
+############
+# Julia IR #
+############
+
+#=== reflection ===#
 
 mutable struct Reflection
     signature::DataType
@@ -77,6 +79,63 @@ function reflect(@nospecialize(sigtypes::Tuple), world::UInt = typemax(UInt))
     return Reflection(S, method, static_params, code_info)
 end
 
+#=== `substitute!` replacement ===#
+
+# This function is essentially a half-port of the old `Core.Compiler.substitute!` function
+# that works on pre-inference IR and only does the things Cassette needs it to do
+function substitute_static_params_and_offset_slots!(@nospecialize(e),
+                                                    @nospecialize(spsig),
+                                                    spvals::Vector{Any},
+                                                    offset::Int)
+    if isa(e, Core.SlotNumber)
+        return Core.SlotNumber(e.id::Int + offset)
+    end
+    if isa(e, Core.NewvarNode)
+        return Core.NewvarNode(substitute_static_params_and_offset_slots!(e.slot, spsig, spvals, offset))
+    end
+    if isa(e, Expr)
+        head = e.head
+        if head === :static_parameter
+            return QuoteNode(spvals[e.args[1]])
+        elseif head === :cfunction
+            @assert !isa(spsig, UnionAll) || !isempty(spvals)
+            if !(e.args[2] isa QuoteNode) # very common no-op
+                e.args[2] = substitute_static_params_and_offset_slots!(e.args[2], spsig, spvals, offset)
+            end
+            e.args[3] = ccall(:jl_instantiate_type_in_env, Any, (Any, Any, Ptr{Any}), e.args[3], spsig, spvals)
+            e.args[4] = svec(Any[ccall(:jl_instantiate_type_in_env, Any, (Any, Any, Ptr{Any}), argt, spsig, spvals)
+                                 for argt in e.args[4]]...)
+        elseif head === :foreigncall
+            @assert !isa(spsig, UnionAll) || !isempty(spvals)
+            for i = 1:length(e.args)
+                if i == 2
+                    e.args[2] = ccall(:jl_instantiate_type_in_env, Any, (Any, Any, Ptr{Any}), e.args[2], spsig, spvals)
+                elseif i == 3
+                    e.args[3] = svec(Any[ccall(:jl_instantiate_type_in_env, Any, (Any, Any, Ptr{Any}), argt, spsig, spvals)
+                                         for argt in e.args[3]]...)
+                elseif i == 4
+                    @assert isa((e.args[4]::QuoteNode).value, Symbol)
+                elseif i == 5
+                    @assert isa(e.args[5], Int)
+                else
+                    e.args[i] = substitute_static_params_and_offset_slots!(e.args[i], spsig, spvals, offset)
+                end
+            end
+        elseif !(Base.Meta.is_meta_expr_head(head))
+            substitute_static_params_and_offset_slots!(e.args, spsig, spvals, offset)
+        end
+    end
+    if isa(e, Array)
+        for i = 1:length(e)
+            e[i] = substitute_static_params_and_offset_slots!(e[i], spsig, spvals, offset)
+        end
+    end
+    return e
+end
+
+#=== IR Repair ===#
+
+# TODO: update this
 function fix_labels_and_gotos!(code::Vector)
     changes = Dict{Int,Int}()
     for (i, stmnt) in enumerate(code)
@@ -95,18 +154,6 @@ function fix_labels_and_gotos!(code::Vector)
         end
     end
     return code
-end
-
-function copy_prelude_code(code::Vector)
-    prelude_code = Any[]
-    for stmnt in code
-        if isa(stmnt, Nothing) || isa(stmnt, NewvarNode)
-            push!(prelude_code, stmnt)
-        else
-            break
-        end
-    end
-    return prelude_code
 end
 
 #################
